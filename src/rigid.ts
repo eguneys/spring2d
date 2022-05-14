@@ -1,4 +1,4 @@
-import { Vec2 } from 'soli2d'
+import { Vec2, Matrix } from 'soli2d'
 
 export type Rigid = {
   mass: number,
@@ -24,6 +24,12 @@ export function make_rigid(x, mass, air_friction, max_speed, max_force) {
   }
 }
 
+export function truncate(a: number, max: number) {
+  let s = (max * max) / (a * a)
+  s = (s > 1 && 1) || Math.sqrt(s)
+  return a * s
+}
+
 export function rigid_update(body: Rigid, dt: number, dt0: number) {
 
   let { air_friction, force, mass, max_speed, max_force } = body
@@ -32,10 +38,10 @@ export function rigid_update(body: Rigid, dt: number, dt0: number) {
 
   let a = force / mass
 
-  a = Math.min(a, max_force)
+  a = truncate(a, max_force)
   let v0_x = x - x0
   let new_vx = v0_x * air_friction * dt / dt0 + a * dt * (dt + dt0) / 2
-  new_vx = Math.min(new_vx, max_speed)
+  new_vx = truncate(new_vx, max_speed)
   let new_x0 = x,
     new_x = x + new_vx
 
@@ -88,6 +94,27 @@ export class RigidSteer {
     return this.opts.max_speed
   }
 
+  _heading0!: Vec2
+
+  get heading() {
+    if (this.velocity.x === 0 && this.velocity.y === 0) {
+      if (!this._heading0) {
+        this._heading0 = Vec2.make(1, 0)
+      }
+    } else {
+      this._heading0 = this.velocity.normalize
+    }
+    return this._heading0
+  }
+
+  get side() {
+    return this.heading.perpendicular
+  }
+
+  get matrix() {
+    return rotate_matrix(this.heading, this.side, this.pos)
+  }
+
   constructor(readonly vs: Vec2,
               readonly opts: RigidOptions) {
 
@@ -108,7 +135,6 @@ export class RigidSteer {
               }
 
     update(dt: number, dt0: number) {
-
 
       if (this.v_seek) {
         let desired_vel = seek_steer(this.pos, this.v_seek, this.max_speed)
@@ -150,10 +176,19 @@ export class RigidSteer {
       }
 
       if (this.v_wander) {
-        let desired_vel = wander_steer(this.pos, this.v_wander, 1, 2, 2)
+        let desired_vel = wander_steer(this.matrix, this.v_wander, 0.001, 0.8, 0.2)
         let steering = desired_vel.sub(this.velocity)
         this.r_x.force = steering.x
         this.r_y.force = steering.y
+      }
+
+      if (true) {
+        let desired_vel = avoid_steer(this.matrix, [Vec2.make(32, 32)], 1)
+        if (desired_vel.x !== 0 || desired_vel.y !== 0) {
+          let steering = desired_vel.sub(this.velocity)
+          this.r_x.force = steering.x
+          this.r_y.force = steering.y
+        }
       }
 
       rigid_update(this.r_x, dt, dt0)
@@ -161,12 +196,56 @@ export class RigidSteer {
     }
 }
 
-export function wander_steer(position: Vec2, wander_target: Vec2, jitter: number, r: number, distance: number) {
+export function rotate_matrix(heading: Vec2, side: Vec2, pos: Vec2) {
+  let a = heading.x,
+    b = side.x,
+    c = heading.y,
+    d = side.y,
+    tx = pos.x,
+    ty = pos.y
+
+  return new Matrix(a, b, c, d, tx, ty)
+}
+
+export function matrix_forward(matrix: Matrix) {
+  return Vec2.make(matrix.a, matrix.c)
+}
+
+export function matrix_side(matrix: Matrix) {
+  return Vec2.make(matrix.b, matrix.d)
+}
+
+export function matrix_translate(matrix: Matrix) {
+  return Vec2.make(matrix.tx, matrix.ty)
+}
+
+export function avoid_steer(position: Matrix, obstacles: Array<Vec2>, distance: number) {
+
+  let orig = matrix_translate(position)
+  let forward = matrix_forward(position).scale_in(10)
+  let side = matrix_side(position).normalize.scale_in(distance/2)
+
+  let potential = obstacles.map(_ => {
+    let o_local = position.inverse.mVec2(_)
+
+    return Math.abs(o_local.y)
+  })
+  let i = potential.indexOf(Math.min(...potential))
+  let d = potential[i]
+  let o = obstacles[i]
+
+  if (d < distance) {
+    return position.mVec2(position.inverse.mVec2(o).set_in(0).inverse)
+  } else {
+    return Vec2.zero
+  }
+}
+
+export function wander_steer(position: Matrix, wander_target: Vec2, jitter: number, r: number, distance: number) {
   wander_target.x += (1 - 2 * Math.random()) * jitter
   wander_target.y += (1 - 2 * Math.random()) * jitter 
   let transform = wander_target.normalize.scale_in(r).add_in(Vec2.make(distance, 0))
-  console.log(wander_target.normalize.scale_in(r))
-  return transform
+  return position.mVec2(transform).sub(matrix_translate(position))
 }
 
 export function pursuit_steer(position: Vec2, target: Vec2, max_speed: number, target_vel: Vec2) {

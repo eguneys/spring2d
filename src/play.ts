@@ -27,6 +27,13 @@ export class GG {
   constructor() {
     this.cursor = make_cursor(this)
     this.player = make_player(this)
+
+    let bg = anim(0, 0, 1, 1)
+    bg.size = Vec2.make(1, 1)
+    bg.x = 32
+    bg.y = 32
+
+    bg._set_parent(stage)
   }
 }
 
@@ -97,15 +104,15 @@ export function make_player(gg: GG) {
   let steer = RigidSteer.make(32, 32, {
     mass: 1000,
     air_friction: 0.8,
-    max_speed: 6,
-    max_force: 0.1 
+    max_speed: 0.3,
+    max_force: 0.001 
   })
 
   //steer.v_evosion = Vec2.make(0, 0)
-  steer.v_wander = Vec2.make(0, 0)
+  steer.v_arrive = Vec2.make(0, 0)
 
   updates.push((dt, dt0) => {
-   // steer.v_evosion.set_in(gg.cursor.x, gg.cursor.y)
+    steer.v_arrive.set_in(gg.cursor.x, gg.cursor.y)
     steer.update(dt, dt0)
 
     t_base.x = steer.x
