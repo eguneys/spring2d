@@ -91,6 +91,28 @@ export function make_cursor() {
   }
 }
 
+export function make_line(_x: number, _y: number, x: number, y: number) {
+
+  let t_base = Template.clone
+
+  let dir = Vec2.make(x, y).normalize
+
+  for (let i = 0; i < 3; i++) {
+    let _d = dir.scale(i)
+    let bg = anim(0, 4, 1, 1, t_base)
+    bg.size = Vec2.unit
+    bg.x = _d.x
+    bg.y = _d.y
+  }
+
+  t_base._set_parent(stage)
+  t_base.x = _x
+  t_base.y = _y
+
+  return () => {
+    t_base._remove()
+  }
+}
 
 export function make_player(gg: GG) {
 
@@ -101,23 +123,28 @@ export function make_player(gg: GG) {
 
   t_base._set_parent(stage)
 
-  let steer = RigidSteer.make(32, 32, {
+  let steer = RigidSteer.make(320, 320, {
     mass: 1000,
     air_friction: 0.8,
-    max_speed: 0.3,
-    max_force: 0.001 
+    max_speed: 300,
+    max_force: 100
   })
 
   //steer.v_evosion = Vec2.make(0, 0)
-  steer.v_arrive = Vec2.make(0, 0)
+  steer.v_arrive = Vec2.make(0,0)
 
+  let t_l = []
   updates.push((dt, dt0) => {
-    steer.v_arrive.set_in(gg.cursor.x, gg.cursor.y)
+    steer.v_arrive.set_in(gg.cursor.x * 1000, gg.cursor.y*1000)
     steer.update(dt, dt0)
 
-    t_base.x = steer.x
-    t_base.y = steer.y
+    t_base.x = steer.x/ 1000
+    t_base.y = steer.y/ 1000
 
+    t_l.forEach(_ => _())
+
+    //t_l.push(make_line(steer.x, steer.y, steer.heading.x, steer.heading.y))
+    t_l.push(make_line(steer.x/1000, steer.y/1000, steer.side.x/1000, steer.side.y/1000))
   })
 }
 

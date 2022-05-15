@@ -183,7 +183,7 @@ export class RigidSteer {
       }
 
       if (true) {
-        let desired_vel = avoid_steer(this.matrix, [Vec2.make(32, 32)], 1)
+        let desired_vel = avoid_steer(this.matrix, [Vec2.make(32000, 32000)], 2000)
         if (desired_vel.x !== 0 || desired_vel.y !== 0) {
           let steering = desired_vel.sub(this.velocity)
           this.r_x.force = steering.x
@@ -234,8 +234,9 @@ export function avoid_steer(position: Matrix, obstacles: Array<Vec2>, distance: 
   let d = potential[i]
   let o = obstacles[i]
 
+
   if (d < distance) {
-    return position.mVec2(position.inverse.mVec2(o).set_in(0).inverse)
+    return position.mVec2(position.inverse.mVec2(o).set_in(0).inverse).sub(orig)
   } else {
     return Vec2.zero
   }
