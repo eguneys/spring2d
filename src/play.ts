@@ -1,3 +1,4 @@
+import { ticks } from './shared'
 import Input from './input'
 import { Transform, Vec2, Quad } from 'soli2d'
 import { RigidSteer } from './rigid'
@@ -10,6 +11,18 @@ let mouse: Mouse;
 let image: HTMLImageElement;
 
 let updates = []
+
+function unbindable_update(fn: (dt: number, dt0: number) => void) {
+  updates.push(fn)
+  return () => {
+    updates.splice(updates.indexOf(fn), 1)
+  }
+}
+
+function dispose(a: Array<() => void>) {
+  a.forEach(_ => _())
+  a.length = 0
+}
 
 export function anim(x: number, y: number, w: number, h: number, parent: Transform = stage) {
   let bg = Template.clone
@@ -26,7 +39,6 @@ export class GG {
 
   constructor() {
     this.cursor = make_cursor(this)
-    this.player = make_player(this)
 
     let bg = anim(0, 0, 1, 1)
     bg.size = Vec2.make(1, 1)
@@ -34,6 +46,19 @@ export class GG {
     bg.y = 32
 
     bg._set_parent(stage)
+
+
+    let d_ps = []
+    d_ps.push(make_player(this))
+
+    unbindable_update((dt, dt0) => {
+      if (input.btnp('z')) {
+        dispose(d_ps)
+        for (let i = 0; i < 10; i++) {
+          d_ps.push(make_player(this))
+        }
+      }
+    })
   }
 }
 
@@ -73,7 +98,7 @@ export function make_cursor() {
   let _x = 0,
     _y = 0
 
-  updates.push((dt, dt0) => {
+  let d_u = unbindable_update((dt, dt0) => {
     let { hover } = mouse
     if (hover) {
       _x = hover[0]
@@ -114,6 +139,8 @@ export function make_line(_x: number, _y: number, x: number, y: number) {
   }
 }
 
+let ps = []
+
 export function make_player(gg: GG) {
 
   let t_base = Template.clone
@@ -123,29 +150,53 @@ export function make_player(gg: GG) {
 
   t_base._set_parent(stage)
 
-  let steer = RigidSteer.make(320, 320, {
+  let steer = RigidSteer.make(32000, 32000, {
     mass: 1000,
     air_friction: 0.8,
-    max_speed: 300,
-    max_force: 100
+    max_speed: 800,
+    max_force: 200
   })
 
-  //steer.v_evosion = Vec2.make(0, 0)
-  steer.v_arrive = Vec2.make(0,0)
+  steer.v_evosion = Vec2.make(0, 0)
+  steer.v_wander = Vec2.make(0,0)
+  steer.v_pursuit = Vec2.make(0, 0)
+
+  let i = 0
 
   let t_l = []
-  updates.push((dt, dt0) => {
-    steer.v_arrive.set_in(gg.cursor.x * 1000, gg.cursor.y*1000)
+  let d_u = unbindable_update((dt, dt0) => {
+
+    steer.v_separation = ps.filter(_ => _!== steer).map(_ => _.matrix)
+    if ((i+= dt) > ticks.seconds* 4) {
+
+      if (steer.v_pursuit) {
+        steer.v_pursuit = undefined
+      } else {
+        steer.v_pursuit = Vec2.make(0, 0)
+      }
+      i = 0
+    }
+
+    steer.v_evosion.set_in(gg.cursor.x * 1000, gg.cursor.y*1000)
+    steer.v_pursuit?.set_in(gg.cursor.x * 1000, gg.cursor.y*1000)
     steer.update(dt, dt0)
 
     t_base.x = steer.x/ 1000
     t_base.y = steer.y/ 1000
 
-    t_l.forEach(_ => _())
+    dispose(t_l)
 
-    //t_l.push(make_line(steer.x, steer.y, steer.heading.x, steer.heading.y))
     t_l.push(make_line(steer.x/1000, steer.y/1000, steer.side.x/1000, steer.side.y/1000))
   })
+
+  ps.push(steer)
+
+  return () => {
+    d_u()
+    dispose(t_l)
+    t_base._remove()
+    ps.splice(ps.indexOf(steer), 1)
+  }
 }
 
 

@@ -136,6 +136,9 @@ export class RigidSteer {
 
     update(dt: number, dt0: number) {
 
+      this.r_x.force = 0
+      this.r_y.force = 0
+
       if (this.v_seek) {
         let desired_vel = seek_steer(this.pos, this.v_seek, this.max_speed)
         let steering = desired_vel.sub(this.velocity)
@@ -163,27 +166,58 @@ export class RigidSteer {
         }
       }
 
+
       if (this.v_evosion) {
-        let desired_vel = evosion_steer(this.pos, this.v_evosion, this.max_speed, this.v0_evosion?this.v_evosion.sub(this.v0_evosion):Vec2.zero)
-        let steering = desired_vel.sub(this.velocity)
-        this.r_x.force = steering.x
-        this.r_y.force = steering.y
-        if (!this.v0_evosion) {
-          this.v0_evosion = this.v_evosion.clone
-        } else {
-          this.v0_evosion.set_in(this.v_evosion.x, this.v_evosion.y)
+        let desired_vel = evosion_steer(this.pos, this.v_evosion, this.max_speed, this.v0_evosion?this.v_evosion.sub(this.v0_evosion):Vec2.zero, 20000)
+        if (desired_vel) {
+          let steering = desired_vel.sub(this.velocity)
+          steering = steering.scale(this.r_x.max_force/this.r_x.max_speed)
+          this.r_x.force += steering.x
+          this.r_y.force += steering.y
+          if (!this.v0_evosion) {
+            this.v0_evosion = this.v_evosion.clone
+          } else {
+            this.v0_evosion.set_in(this.v_evosion.x, this.v_evosion.y)
+          }
         }
       }
 
       if (this.v_wander) {
-        let desired_vel = wander_steer(this.matrix, this.v_wander, 0.001, 0.8, 0.2)
+        let desired_vel = wander_steer(this.matrix, this.v_wander, 20, 400, 60)
         let steering = desired_vel.sub(this.velocity)
-        this.r_x.force = steering.x
-        this.r_y.force = steering.y
+        steering = steering.scale(this.r_x.max_force/this.r_x.max_speed)
+        this.r_x.force += steering.x
+        this.r_y.force += steering.y
+      }
+
+      if (this.v_separation) {
+        let desired_vel = separation_steer(this.matrix, this.v_separation)
+        let steering = desired_vel.sub(this.velocity)
+        steering = steering.scale(this.r_x.max_force/this.r_x.max_speed)
+        this.r_x.force += steering.x
+        this.r_y.force += steering.y
       }
 
       if (true) {
-        let desired_vel = avoid_steer(this.matrix, [Vec2.make(32000, 32000)], 2000)
+
+        let desired_vel = wall_avoid_steer(this.matrix, 4000, [
+          Line.from_xy(64000, 0, 64000, 64000),
+          Line.from_xy(0, 64000, 0, 0),
+          Line.from_xy(0, 0, 64000, 0),
+          Line.from_xy(64000, 64000, 0, 64000)
+        ])
+        if (desired_vel) {
+          this.v_wander.set_in(0, 0)
+          let steering = desired_vel.sub(this.velocity)
+          steering = steering.scale(this.r_x.max_force/this.r_x.max_speed)
+          this.r_x.force = steering.x
+          this.r_y.force = steering.y
+        }
+      }
+
+
+      if (false) {
+        let desired_vel = avoid_steer(this.matrix, [Vec2.make(32000, 32000)], 20000)
         if (desired_vel.x !== 0 || desired_vel.y !== 0) {
           let steering = desired_vel.sub(this.velocity)
           this.r_x.force = steering.x
@@ -219,6 +253,65 @@ export function matrix_translate(matrix: Matrix) {
   return Vec2.make(matrix.tx, matrix.ty)
 }
 
+
+export function separation_steer(position: Matrix, neighbors: Array<Matrix>) {
+  let res = Vec2.make(0, 0)
+
+  neighbors.forEach(n => {
+    let toAgent = matrix_translate(position).sub(matrix_translate(n))
+    if (toAgent.length === 0) {
+      toAgent = Vec2.unit
+    }
+    res.add_in(toAgent.normalize.scale(1000000/toAgent.length))
+  })
+  console.log(res)
+  return res
+}
+
+
+export function wall_avoid_steer(position: Matrix, length: number, walls: Array<Line>) {
+  let orig = matrix_translate(position)
+  let heading = matrix_forward(position)
+  let side = matrix_side(position)
+
+  let fs = []
+  fs.push(heading.scale(length).add_in(orig))
+  fs.push(heading.add_angle(-Math.PI * 0.25).scale_in(length / 2).add_in(orig))
+  fs.push(heading.add_angle(Math.PI * 0.25).scale_in(length / 2).add_in(orig))
+
+
+  let steering_force
+
+  let closest_dist,
+  closest_wall,
+  closest_point
+
+  fs.forEach(_fs => {
+
+    walls.forEach(line => {
+      let res = line.intersects(Line.make(orig, _fs))
+
+      if (res) {
+        let [dist, point] = res
+
+        if (!closest_dist || dist < closest_dist) {
+          closest_dist = dist
+          closest_wall = line
+          closest_point = point
+        }
+      }
+    })
+
+    if (closest_wall) {
+      let overshoot = _fs.sub(closest_point)
+      steering_force = closest_wall.normal.scale(overshoot.length)
+    }
+  })
+
+  return steering_force
+
+}
+
 export function avoid_steer(position: Matrix, obstacles: Array<Vec2>, distance: number) {
 
   let orig = matrix_translate(position)
@@ -245,7 +338,8 @@ export function avoid_steer(position: Matrix, obstacles: Array<Vec2>, distance: 
 export function wander_steer(position: Matrix, wander_target: Vec2, jitter: number, r: number, distance: number) {
   wander_target.x += (1 - 2 * Math.random()) * jitter
   wander_target.y += (1 - 2 * Math.random()) * jitter 
-  let transform = wander_target.normalize.scale_in(r).add_in(Vec2.make(distance, 0))
+  wander_target = wander_target.normalize
+  let transform = wander_target.scale(r).add(Vec2.make(distance, 0))
   return position.mVec2(transform).sub(matrix_translate(position))
 }
 
@@ -257,8 +351,11 @@ export function pursuit_steer(position: Vec2, target: Vec2, max_speed: number, t
   return seek_steer(position, prediction, max_speed)
 }
 
-export function evosion_steer(position: Vec2, target: Vec2, max_speed: number, target_vel: Vec2) {
+export function evosion_steer(position: Vec2, target: Vec2, max_speed: number, target_vel: Vec2, distance: number) {
   let D = position.distance(target)
+  if (D > distance) {
+    return Vec2.zero
+  }
   let c = 0.08
   let T = D * c
   let prediction = target.add(target_vel.normalize.scale(T))
@@ -285,3 +382,49 @@ export function arrive_steer(position: Vec2, target: Vec2, max_speed: number, sl
   return desired_velocity
 }
 
+
+export class Line {
+
+  static make = (a: Line, b: Line) => {
+    return new Line(a, b)
+  }
+
+  static from_xy = (x: number, y: number, x2: number, y2: number) => {
+    return Line.make(Vec2.make(x, y), Vec2.make(x2, y2))
+  }
+
+  readonly parallel: Vec2
+  readonly normal: Vec2
+
+
+  constructor(readonly a: Vec2,
+              readonly b: Vec2) {
+                this.parallel = b.sub(a).normalize
+                this.normal = this.parallel.perpendicular
+              }
+
+
+/* https://github.com/wangchen/Programming-Game-AI-by-Example-src/blob/master/Common/2D/geometry.h */
+  intersects(cd: Line) {
+    let { a, b } = this
+    let { a: c, b: d } = cd
+    let r_top = (a.y - c.y) * (d.x - c.x) - (a.x - c.x) * (d.y - c.y)
+    let r_bot = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x)
+
+    let s_top = (a.y - c.y) * (b.x - a.x) - (a.x - c.x) * (b.y - a.y)
+    let s_bot = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x)
+
+    if ((r_bot === 0) || (s_bot === 0)) {
+      return undefined
+    }
+    let r = r_top / r_bot
+    let s = s_top / s_bot
+
+    if ((r > 0) && (r < 1) && (s > 0) && (s < 1)) {
+      let dist = a.distance(b) * r
+      let point = a.add(b.sub(a).scale_in(r))
+
+      return [dist, point]
+    }
+  }
+}
